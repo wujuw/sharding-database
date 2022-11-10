@@ -1,0 +1,13 @@
+datasources:
+  -
+    name: db-0
+    host: localhost
+    port: 50051
+  -
+    name: db-1
+    host: localhost
+    port: 50052  
+  -
+    name: db-2
+    host: localhost
+    port: 50053

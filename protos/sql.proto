@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package distributed;
+
+message SQLRequest {
+    string sql = 1;
+}
+
+message Record {
+    string json = 1;
+}
+
+service SQL {
+    rpc ExecuteSQL (SQLRequest) returns (stream Record);
+}

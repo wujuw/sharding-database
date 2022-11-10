@@ -1,0 +1,24 @@
+sharding-rules:
+  author:
+    rule-name: mod
+    mod: 3
+    sharding-key: id
+    db-maps:
+      -
+        reminder: 0
+        db-name: db-0
+      -
+        reminder: 1
+        db-name: db-1
+      -
+        reminder: 2
+        db-name: db-2
+  library:
+    rule-name: single
+    db-maps:
+      -
+        db-name: db-0
+  book:
+    rule-name: bind
+    bind-table: author
+    bind-key: author_id

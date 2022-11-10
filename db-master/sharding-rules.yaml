@@ -5,13 +5,13 @@ sharding-rules:
     sharding-key: id
     db-maps:
       -
-        reminder: 0
+        remainder: 0
         db-name: db-0
       -
-        reminder: 1
+        remainder: 1
         db-name: db-1
       -
-        reminder: 2
+        remainder: 2
         db-name: db-2
   library:
     rule-name: single
@@ -22,3 +22,16 @@ sharding-rules:
     rule-name: bind
     bind-table: author
     bind-key: author_id
+  langbook:
+    rule-name: lang
+    sharding-key: name
+    db-maps:
+      -
+        lang: zh
+        db-name: db-0
+      -
+        lang: jp
+        db-name: db-1
+      -
+        lang: en
+        db-name: db-2

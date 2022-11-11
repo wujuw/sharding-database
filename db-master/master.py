@@ -1,3 +1,4 @@
+import copy
 import sys
 import logging
 import grpc
@@ -449,6 +450,121 @@ def getMetadataFromTable(table_name, db_stub):
 def sharding_value_lang(sql_json):
     value = find_sharding_value_from_where(sql_json['where'], 'lang')
 
+# "select * from a join b on a.id = b.id"
+# {'select': '*', 'from': ['a', {'join': 'b', 'on': {'eq': ['a.id', 'b.id']}}]}
+def join(sql, sql_json, sharding_rules, db_client_map):
+    # 获取join的表名
+    join_table_name = sql_json['from'][1]['join']
+    # 获取join的字段
+    join_on = sql_json['from'][1]['on']
+    join_on_field = {'a': join_on['eq'][0], 'b': join_on['eq'][1]}
+    
+    sql_json_a = {}
+    sql_json_b = {}
+    sql_json_a['from'] = sql_json['from'][0]
+    sql_json_b['from'] = join_table_name
+
+    if sharding_rules[sql_json_a['from']]['rule-name'] == 'bind':
+        bind_table_name = sharding_rules[sql_json_a['from']]['bind-table']
+        sharding_rules[sql_json_a['from']] = sharding_rules[bind_table_name]
+    if sharding_rules[sql_json_b['from']]['rule-name'] == 'bind':
+        bind_table_name = sharding_rules[sql_json_b['from']]['bind-table']
+        sharding_rules[sql_json_b['from']] = sharding_rules[bind_table_name]
+    metadata_a = getMetadataFromTable(sql_json_a['from'], db_client_map[sharding_rules[sql_json_a['from']]['db-maps'][0]['db-name']])
+    metadata_b = getMetadataFromTable(sql_json_b['from'], db_client_map[sharding_rules[sql_json_b['from']]['db-maps'][0]['db-name']])
+
+    ab = {'a': {'json': sql_json_a, 'metadata': metadata_a}, 'b': {'json': sql_json_b, 'metadata': metadata_b}}
+    fields = {'a':[], 'b':[]}
+    table_name = {'a': sql_json_a['from'], 'b': sql_json_b['from']}
+    for key in ab:
+        if sql_json['select'] == '*':
+            ab[key]['json']['select'] = []
+            for column in ab[key]['metadata']['columns_json']:
+                ab[key]['json']['select'].append({'value': table_name[key] + '.' + column['name']})
+                fields[key].append(table_name[key] + '.' + column['name'])
+        else:
+            ab[key]['json']['select'] = []
+            for field in sql_json['select']:
+                if field['value'] in ab[key]['metadata']['columns']:
+                    ab[key]['json']['select'].append({'value': table_name[key] + '.' + field['value']})
+                    fields[key].append(table_name[key] + '.' + field['value'])
+                elif field['value'] == key + '.*':
+                    for column in ab[key]['metadata']['columns']:
+                        ab[key]['json']['select'].append({'value': table_name[key] + '.' + column})
+                        fields[key].append(table_name[key] + '.' + column)
+        if join_on_field[key] not in fields[key] and join_on_field[key].split('.')[1] not in fields[key]:
+            fields[key].append(join_on_field)
+            ab[key]['json']['select'].append({'value': join_on_field})
+        if 'where' in sql_json:
+            conditions = get_conditions_from_where(sql_json['json']['where'], ab[key]['json']['from'], ab[key]['metadata']['columns'])
+            ab[key]['json']['where'] = {'and': conditions}
+        if 'orderby' in sql_json:
+            orderby_value = sql_json['orderby']['value']
+            if orderby_value in fields[key]:
+                ab[key]['json']['orderby'] = {'value': orderby_value}
+
+    res_a = select(sql, ab['a']['json'], sharding_rules, db_client_map)[1:]
+    res_b = select(sql, ab['b']['json'], sharding_rules, db_client_map)[1:]
+    res = []
+    for a in res_a:
+        for b in res_b:
+            if a[fields['a'].index(join_on_field['a'])] == b[fields['b'].index(join_on_field['b'])]:
+                res.append(a + b)
+
+    checkOrderBy(sql_json, fields, res)
+    res.insert(0, fields['a'] + fields['b'])
+    return res
+
+def get_conditions_from_where(where, table_name, columns):
+    conditions = []
+    if 'and' in where:
+        for condition in where['and']:
+            conditions.append(get_conditions_from_where(condition, table_name, columns))
+    elif 'or' in where:
+        for condition in where['or']:
+            conditions.append(get_conditions_from_where(condition, table_name, columns))
+    elif 'eq' in where:
+        if where['eq'][0].split('.')[0] == table_name:
+            if where['eq'][0].split('.')[1] in columns:
+                conditions.append(where)
+    elif 'neq' in where:
+        if where['neq'][0].split('.')[0] == table_name:
+            if where['neq'][0].split('.')[1] in columns:
+                conditions.append(where)
+    elif 'gt' in where:
+        if where['gt'][0].split('.')[0] == table_name:
+            if where['gt'][0].split('.')[1] in columns:
+                conditions.append(where)
+    elif 'gte' in where:
+        if where['gte'][0].split('.')[0] == table_name:
+            if where['gte'][0].split('.')[1] in columns:
+                conditions.append(where)
+    elif 'lt' in where:
+        if where['lt'][0].split('.')[0] == table_name:
+            if where['lt'][0].split('.')[1] in columns:
+                conditions.append(where)
+    elif 'lte' in where:
+        if where['lte'][0].split('.')[0] == table_name:
+            if where['lte'][0].split('.')[1] in columns:
+                conditions.append(where)
+    elif 'like' in where:
+        if where['like'][0].split('.')[0] == table_name:
+            if where['like'][0].split('.')[1] in columns:
+                conditions.append(where)
+    elif 'not-like' in where:
+        if where['not-like'][0].split('.')[0] == table_name:
+            if where['not-like'][0].split('.')[1] in columns:
+                conditions.append(where)
+    elif 'in' in where:
+        if where['in'][0].split('.')[0] == table_name:
+            if where['in'][0].split('.')[1] in columns:
+                conditions.append(where)
+    elif 'not-in' in where:
+        if where['not-in'][0].split('.')[0] == table_name:
+            if where['not-in'][0].split('.')[1] in columns:
+                conditions.append(where)
+    return conditions
+
 if __name__ == '__main__':
     logging.basicConfig()
 
@@ -479,13 +595,15 @@ if __name__ == '__main__':
             res = delete(sql, sql_json, sharding_rules, db_client_map)
         elif 'update' in sql_json:
             res = update(sql, sql_json, sharding_rules, db_client_map)
-        elif 'select' in sql_json:
+        elif 'select' in sql_json and not isinstance(sql_json['from'], list):
             res = select(sql, sql_json, sharding_rules, db_client_map)
         elif 'create table' in sql_json:
             res = create_table(sql, sql_json, sharding_rules, db_client_map)
         elif 'drop' in sql_json:
             res = drop_table(sql, sql_json, sharding_rules, db_client_map)
-        
+        elif isinstance(sql_json['from'], list) and 'join' in sql_json['from'][1]:
+            res = join(sql, sql_json, sharding_rules, db_client_map)
+
         if isinstance(res, list):
             for row in res:
                 print(row)

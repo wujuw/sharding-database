@@ -2,6 +2,7 @@ create table author(id NUMBER, name TEXT)
 create table book(id NUMBER, name TEXT, author_id NUMBER)
 select * from author
 select * from book order by id desc
+select * from book join author on book.author_id = author.id
 
 -- Path: db-master/author.sql
 insert into author(id, name) values(1, 'John')

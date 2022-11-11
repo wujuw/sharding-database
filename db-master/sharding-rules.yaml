@@ -27,10 +27,10 @@ sharding-rules:
     sharding-key: name
     db-maps:
       -
-        lang: zh
+        lang: zh-cn
         db-name: db-0
       -
-        lang: jp
+        lang: ja
         db-name: db-1
       -
         lang: en

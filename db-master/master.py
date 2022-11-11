@@ -8,6 +8,10 @@ import json
 import yaml
 from mo_sql_parsing import format
 from mo_sql_parsing import parse
+import os
+from langdetect import detect
+from langdetect import DetectorFactory
+DetectorFactory.seed = 0
 
 def executeSQL(sql_routes, db_stub_map):
     # 执行sql
@@ -154,8 +158,14 @@ def insert(sql, sql_json, sharding_rules, db_stub_map):
 
 def sql_routes_lang(sharding_value, db_maps):
     sql_routes = {}
+    if sharding_value == None:
+        # broadcast
+        for db_map in db_maps:
+            sql_routes[db_map['db-name']] = sql
+        return sql_routes
     for db_map in db_maps:
-        if sharding_value['literal'] == db_map['lang']:
+        lang = detect(sharding_value['literal'])
+        if lang == db_map['lang']:
             sql_routes[db_map['db-name']] = sql
     return sql_routes
 
@@ -609,13 +619,49 @@ def get_conditions_from_where(where, table_name, columns):
                 conditions.append(where)
     return conditions
 
+
+class Master:
+    def __init__(self):
+        logging.basicConfig(level=logging.INFO)
+        datasources_path = './db-master/datasources.yaml'
+        sharding_rules_path = './db-master/sharding-rules.yaml'
+        
+        # read config
+        with open(datasources_path, 'r') as f:
+            self.datasources = yaml.safe_load(f)['datasources']
+        with open(sharding_rules_path, 'r') as f:
+            self.sharding_rules = yaml.safe_load(f)['sharding-rules']
+        self.db_client_map = {}
+        for datasource in self.datasources:
+            self.db_client_map[datasource['name']] = sql_pb2_grpc.SQLStub(grpc.insecure_channel('{}:{}'.format(datasource['host'], datasource['port'])))
+
+    def execute(self, sql):
+        sql_json = parse(sql)
+        res = None
+        if 'insert' in sql_json:
+            res = insert(sql, sql_json, self.sharding_rules, self.db_client_map)
+        elif 'delete' in sql_json:
+            res = delete(sql, sql_json, self.sharding_rules, self.db_client_map)
+        elif 'update' in sql_json:
+            res = update(sql, sql_json, self.sharding_rules, self.db_client_map)
+        elif 'select' in sql_json and not isinstance(sql_json['from'], list):
+            res = select(sql, sql_json, self.sharding_rules, self.db_client_map)
+        elif 'create table' in sql_json:
+            res = create_table(sql, sql_json, self.sharding_rules, self.db_client_map)
+        elif 'drop' in sql_json:
+            res = drop_table(sql, sql_json, self.sharding_rules, self.db_client_map)
+        elif isinstance(sql_json['from'], list) and 'join' in sql_json['from'][1]:
+            res = join(sql, sql_json, self.sharding_rules, self.db_client_map)
+
+        return res
+
 if __name__ == '__main__':
     logging.basicConfig()
 
     # datasources_path = sys.argv[1]
     # sharding_rules_path = sys.argv[2]
-    datasources_path = './db-master/datasources.yaml'
-    sharding_rules_path = './db-master/sharding-rules.yaml'
+    datasources_path = '/home/whhxd/codebase/distributed-database-system/db-master/datasources.yaml'
+    sharding_rules_path = '/home/whhxd/codebase/distributed-database-system/db-master/sharding-rules.yaml'
     
     # read config
     with open(datasources_path, 'r') as f:

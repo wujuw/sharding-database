@@ -21,6 +21,33 @@ def executeSQL(sql_routes, db_stub_map):
         response_map[db_name] = res
     return response_map
 
+def broadcastSQL(sql, sql_json, sharding_rules, db_stub_map):
+    # 解析sql
+    if isinstance(sql_json['from'], list):
+        table_name = sql_json['from'][0]
+    else:
+        table_name = sql_json['from']
+    sharding_rule = sharding_rules[table_name]
+    if sharding_rule['rule-name'] == 'bind':
+        bind_table = sharding_rule['bind-table']
+        sharding_rule = sharding_rules[bind_table]
+    db_maps = sharding_rule['db-maps']
+
+    # 生成路由 db->sql
+    sql_routes = {}
+    for db_map in db_maps:
+        sql_routes[db_map['db-name']] = sql
+    
+    # 执行sql
+    response_map = executeSQL(sql_routes, db_stub_map)
+    
+    # 归并
+    # 对于select，返回所有db的结果
+    res = []
+    for db_name, db_res in response_map.items():
+        res.extend(db_res)
+    return res
+
 # create table book(id NUMBER PRIMARY KEY, name TEXT)
 # {'create table': {'name': 'book', 'columns': [{'name': 'id', 'type': {'number': {}}, 'primary_key': True}, {'name': 'name', 'type': {'text': {}}}]}}
 def create_table(sql, sql_json, sharding_rules, db_stub_map):
@@ -309,7 +336,7 @@ def select(sql, sql_json, sharding_rules, db_stub_map):
             where = sql_json['where']
             sharding_key_value = find_sharding_value_from_where(where, sharding_key)
     db_maps = sharding_rule['db-maps']
-    fields = getFields(sql_json, db_client_map[db_maps[0]['db-name']])
+    fields = getFields(sql_json, db_stub_map[db_maps[0]['db-name']])
 
     # 生成路由 db->sql
     sql_routes = {}
@@ -463,16 +490,33 @@ def join(sql, sql_json, sharding_rules, db_client_map):
     sql_json_b = {}
     sql_json_a['from'] = sql_json['from'][0]
     sql_json_b['from'] = join_table_name
+    table_name_a = sql_json_a['from']
+    table_name_b = sql_json_b['from']
 
-    if sharding_rules[sql_json_a['from']]['rule-name'] == 'bind':
-        bind_table_name = sharding_rules[sql_json_a['from']]['bind-table']
-        sharding_rules[sql_json_a['from']] = sharding_rules[bind_table_name]
-    if sharding_rules[sql_json_b['from']]['rule-name'] == 'bind':
-        bind_table_name = sharding_rules[sql_json_b['from']]['bind-table']
-        sharding_rules[sql_json_b['from']] = sharding_rules[bind_table_name]
-    metadata_a = getMetadataFromTable(sql_json_a['from'], db_client_map[sharding_rules[sql_json_a['from']]['db-maps'][0]['db-name']])
-    metadata_b = getMetadataFromTable(sql_json_b['from'], db_client_map[sharding_rules[sql_json_b['from']]['db-maps'][0]['db-name']])
+    res = None
 
+    sharding_rule_a = sharding_rules[table_name_a]
+    sharding_rule_b = sharding_rules[table_name_b]
+
+    if sharding_rule_a['rule-name'] == 'bind':
+        bind_table_name = sharding_rule_a['bind-table']
+        bind_key = sharding_rule_a['bind-key']
+        join_key = sharding_rules[bind_table_name]['sharding-key']
+        if join_on_field['a'] == table_name_a + '.' + bind_key and join_on_field['b'] == table_name_b + '.' + join_key:
+            # 绑定优化
+            res = broadcastSQL(sql, sql_json_a, sharding_rules, db_client_map)
+        sharding_rule_a = sharding_rules[bind_table_name]
+    if sharding_rule_b['rule-name'] == 'bind':
+        bind_table_name = sharding_rule_b['bind-table']
+        bind_key = sharding_rule_b['bind-key']
+        join_key = sharding_rules[bind_table_name]['sharding-key']
+        if join_on_field['b'] == table_name_b + '.' + bind_key and join_on_field['a'] == table_name_a + '.' + join_key:
+            # 绑定优化
+            res = broadcastSQL(sql, sql_json_b, sharding_rules, db_client_map)
+        sharding_rule_b = sharding_rules[bind_table_name]
+    metadata_a = getMetadataFromTable(sql_json_a['from'], db_client_map[sharding_rule_a['db-maps'][0]['db-name']])
+    metadata_b = getMetadataFromTable(sql_json_b['from'], db_client_map[sharding_rule_b['db-maps'][0]['db-name']])
+    
     ab = {'a': {'json': sql_json_a, 'metadata': metadata_a}, 'b': {'json': sql_json_b, 'metadata': metadata_b}}
     fields = {'a':[], 'b':[]}
     table_name = {'a': sql_json_a['from'], 'b': sql_json_b['from']}
@@ -502,16 +546,16 @@ def join(sql, sql_json, sharding_rules, db_client_map):
             orderby_value = sql_json['orderby']['value']
             if orderby_value in fields[key]:
                 ab[key]['json']['orderby'] = {'value': orderby_value}
+    if res == None:
+        res_a = select(sql, ab['a']['json'], sharding_rules, db_client_map)[1:]
+        res_b = select(sql, ab['b']['json'], sharding_rules, db_client_map)[1:]
+        res = []
+        for a in res_a:
+            for b in res_b:
+                if a[fields['a'].index(join_on_field['a'])] == b[fields['b'].index(join_on_field['b'])]:
+                    res.append(a + b)
 
-    res_a = select(sql, ab['a']['json'], sharding_rules, db_client_map)[1:]
-    res_b = select(sql, ab['b']['json'], sharding_rules, db_client_map)[1:]
-    res = []
-    for a in res_a:
-        for b in res_b:
-            if a[fields['a'].index(join_on_field['a'])] == b[fields['b'].index(join_on_field['b'])]:
-                res.append(a + b)
-
-    checkOrderBy(sql_json, fields, res)
+    checkOrderBy(res, sql_json, fields['a'] + fields['b'])
     res.insert(0, fields['a'] + fields['b'])
     return res
 

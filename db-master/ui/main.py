@@ -87,6 +87,7 @@ class Ui_DistributedDatabase(object):
 
     def getcontent(self):
         sql = self.contentlineedit.text()
+        print("读取用户输入：", sql)
         res = self.master.execute(sql)
         mainWindow = QMainWindow()
         ui = result.Ui_MainWindow()

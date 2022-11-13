@@ -1,8 +1,8 @@
 create table author(id NUMBER, name TEXT)
 create table book(id NUMBER, name TEXT, author_id NUMBER)
-select * from author
-select * from book order by id desc
-select * from book join author on book.author_id = author.id
+-- select * from author
+-- select * from book order by id desc
+-- select * from book join author on book.author_id = author.id
 
 -- Path: db-master/author.sql
 insert into author(id, name) values(1, 'John')
@@ -23,6 +23,11 @@ insert into book(id, name, author_id) values(7, 'Book 7', 4)
 insert into book(id, name, author_id) values(8, 'Book 8', 4)
 insert into book(id, name, author_id) values(9, 'Book 9', 5)
 insert into book(id, name, author_id) values(10, 'Book 10', 5)
+insert into book(id, name, author_id) values(11, 'Book 11', 6)
+
+-- update book set name = 'Book 1' where author_id = 1
+
+-- delete from book where id = 11
 
 create table langbook(id NUMBER, name TEXT, info TEXT)
 insert into langbook(id, name, info) values(1, '书1', 'Book 1 info')

@@ -404,6 +404,7 @@ def rewrite_limit(sql_json):
         if 'offset' in sql_json:
             offset = sql_json['offset']
             if 'limit' in sql_json:
+                print("limit改写: 原始: LIMIT %d OFFSET %d, 改写: LIMIT %d OFFSET %d" % (sql_json['limit'], offset, sql_json['limit'] + offset, 0))
                 limit = sql_json['limit']
                 sql_json['limit'] = offset + limit
                 sql_json['offset'] = 0
@@ -424,10 +425,12 @@ def checkLimit(response_list, sql_json, rewriteRes):
         return response_list
     if offset == -1:
         return response_list[:limit]
+    print("获取分页数据: " + "limit: %d offset: %d" % (limit, offset))
     return response_list[offset:offset+limit]
 
 def checkOrderBy(response_list, sql_json, fields):
     if 'orderby' in sql_json:
+        print("按{}归并排序".format(sql_json['orderby']))
         order_by = sql_json['orderby']
         order_by_field = order_by['value']
         order_by_index = fields.index(order_by_field)
@@ -446,6 +449,7 @@ def addOrderByFields(sql_json, fields):
         order_by = sql_json['orderby']
         if order_by['value'] not in fields:
             fields.append(order_by['value'])
+            print("添加排序字段:", order_by['value'])
             addIndex = len(fields) - 1
         fields_in_json = []
         for field in fields:
@@ -514,6 +518,7 @@ def join(sql, sql_json, sharding_rules, db_client_map):
         join_key = sharding_rules[bind_table_name]['sharding-key']
         if join_on_field['a'] == table_name_a + '.' + bind_key and join_on_field['b'] == table_name_b + '.' + join_key:
             # 绑定优化
+            print("绑定优化: {} 绑定 {}".format(table_name_a, table_name_b))
             res = broadcastSQL(sql, sql_json_a, sharding_rules, db_client_map)
         sharding_rule_a = sharding_rules[bind_table_name]
     if sharding_rule_b['rule-name'] == 'bind':
@@ -522,6 +527,7 @@ def join(sql, sql_json, sharding_rules, db_client_map):
         join_key = sharding_rules[bind_table_name]['sharding-key']
         if join_on_field['b'] == table_name_b + '.' + bind_key and join_on_field['a'] == table_name_a + '.' + join_key:
             # 绑定优化
+            print("绑定优化: {} 绑定 {}".format(table_name_b, table_name_a))
             res = broadcastSQL(sql, sql_json_b, sharding_rules, db_client_map)
         sharding_rule_b = sharding_rules[bind_table_name]
     metadata_a = getMetadataFromTable(sql_json_a['from'], db_client_map[sharding_rule_a['db-maps'][0]['db-name']])
@@ -673,6 +679,33 @@ if __name__ == '__main__':
     db_client_map = {}
     for datasource in datasources:
         db_client_map[datasource['name']] = sql_pb2_grpc.SQLStub(grpc.insecure_channel('{}:{}'.format(datasource['host'], datasource['port'])))
+
+    if sys.argv[1] is not None:
+        # read sql file
+        with open(sys.argv[1], 'r') as f:
+            sqls = f.readlines()
+        for sql in sqls:
+            # check is comment
+            if sql[0] == '-' and sql[1] == '-':
+                continue
+            # check is empty
+            if sql == '\n':
+                continue
+            sql_json = parse(sql)
+            if 'insert' in sql_json:
+                insert(sql, sql_json, sharding_rules, db_client_map)
+            elif 'delete' in sql_json:
+                delete(sql, sql_json, sharding_rules, db_client_map)
+            elif 'update' in sql_json:
+                update(sql, sql_json, sharding_rules, db_client_map)
+            elif 'select' in sql_json and not isinstance(sql_json['from'], list):
+                select(sql, sql_json, sharding_rules, db_client_map)
+            elif 'create table' in sql_json:
+                create_table(sql, sql_json, sharding_rules, db_client_map)
+            elif 'drop' in sql_json:
+                drop_table(sql, sql_json, sharding_rules, db_client_map)
+            elif isinstance(sql_json['from'], list) and 'join' in sql_json['from'][1]:
+                join(sql, sql_json, sharding_rules, db_client_map)
     
     # read sql
     while True:

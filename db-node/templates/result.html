@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+    <p>于 {{ sql_call.time }} 执行了SQL: {{ sql_call.sql }}</p>
+    <p>返回结果: </p>
+    <table border="1">
+        <tr>
+            {% if sql_call.columns %}
+                {% for column in sql_call.columns %}
+                <th>{{ column }}</th>
+                {% endfor %}
+            {% endif %}
+        </tr>
+        {% for row in sql_call.result %}
+        <tr>
+            {% for i in range(row|length) %}
+            <td>{{ row[i] }}</td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+</html>

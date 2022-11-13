@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+  <head>
+    <title>数据库分站点</title>
+  </head>
+  <body>
+    <h1>分站点服务器</h1>
+      <p>接收到到了主站点发来的SQL: </p>
+      <table border="1">
+        <tr>
+            <th>序号</th>
+            <th>SQL</th>
+            <th>时间</th>
+        </tr>
+        {% for sql in list %}
+        <tr>
+            <td>{{ sql['id'] }}</td>
+            <td>{{ sql['sql'] }}</td>
+            <td>{{ sql['time'] }}</td>
+            <td><a href="{{ url_for('result', id=sql.id) }}">查看返回结果</a></td>
+        </tr>
+        {% endfor %}
+      </table>
+  </body>
+</html>
